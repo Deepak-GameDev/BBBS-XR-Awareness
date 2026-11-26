@@ -32,9 +32,27 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         public ModelAsset OnnxModel;
         [Space(40)]
 
+        // ---------------------------------------------------------------------------------
+        // [BBB] Hooks added for the Situational Awareness layer (Assets/_Project).
+        // The sample code cannot reference our scripts directly, so it exposes static
+        // hooks that our code subscribes to / writes to.
+        // ---------------------------------------------------------------------------------
+        [Header("[BBB] Awareness integration")]
+        [SerializeField] private bool m_drawSampleBoxes = false; // the sample's own 2D boxes (off: we draw our own markers)
+
+        /// <summary>Raised after every inference: detections (pixel boxes in model-input space + score), model input size, camera pose AT CAPTURE TIME, inference latency in ms.</summary>
+        public static event System.Action<IReadOnlyList<(int classId, Vector4 boundingBox, float score)>, Vector2Int, Pose, float> OnInferenceCompleted;
+        /// <summary>Set by our controls to pause/resume detection.</summary>
+        public static bool ExternalPause;
+        /// <summary>Confidence threshold set by our controls. Negative = use the inspector value.</summary>
+        public static float ScoreThresholdOverride = -1f;
+        /// <summary>Class names loaded from the labels file (index = class id).</summary>
+        public static string[] Labels { get; private set; } = new string[0];
+
         private Worker m_engine;
         private Vector2Int m_inputSize;
-        private readonly List<(int classId, Vector4 boundingBox)> m_detections = new List<(int classId, Vector4 boundingBox)>();
+        private readonly List<(int classId, Vector4 boundingBox, float score)> m_detections = new List<(int classId, Vector4 boundingBox, float score)>(); // [BBB] added score
+        private readonly List<(int classId, Vector4 boundingBox)> m_detectionsForSampleUi = new List<(int classId, Vector4 boundingBox)>(); // [BBB]
 
         private void Awake()
         {
@@ -48,9 +66,17 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         {
             m_uiInference.SetLabels(m_labelsAsset);
 
+            // [BBB] Parse labels once for our code (trim '\r' left by Windows line endings).
+            var rawLabels = m_labelsAsset.text.Split('\n');
+            Labels = new string[rawLabels.Length];
+            for (int i = 0; i < rawLabels.Length; i++)
+            {
+                Labels[i] = rawLabels[i].Trim();
+            }
+
             while (true)
             {
-                while (m_uiMenuManager.IsPaused)
+                while (m_uiMenuManager.IsPaused || ExternalPause) // [BBB] also honour our pause button
                 {
                     yield return null;
                 }
@@ -60,6 +86,10 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
         private void OnDestroy()
         {
+            if (m_engine == null) // [BBB] Awake failed (e.g. model missing) - nothing to clean up
+            {
+                return;
+            }
             m_engine.PeekOutput(0)?.CompleteAllPendingOperations();
             m_engine.PeekOutput(1)?.CompleteAllPendingOperations();
             m_engine.PeekOutput(2)?.CompleteAllPendingOperations();
@@ -115,6 +145,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             TextureConverter.ToTensor(targetTexture, input, textureTransform);
 
             // Schedule all model layers
+            float inferenceStartTime = Time.realtimeSinceStartup; // [BBB] measure inference latency
             m_engine.Schedule(input);
 
             // Get the results. ReadbackAndCloneAsync waits for all layers to complete before returning the result
@@ -126,6 +157,12 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             using var boxes = boxesAwaiter.GetResult();
             if (boxes.shape[0] == 0)
             {
+                // [BBB] Still report "nothing found" so the HUD's inference time keeps updating.
+                m_detections.Clear();
+                if (m_cameraAccess.IsPlaying && !ExternalPause)
+                {
+                    OnInferenceCompleted?.Invoke(m_detections, m_inputSize, cachedCameraPose, (Time.realtimeSinceStartup - inferenceStartTime) * 1000f);
+                }
                 yield break;
             }
 
@@ -153,7 +190,21 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                 yield break;
             }
 
-            NonMaxSuppression(m_detections, boxes, classIDs, scores, m_iouThreshold, m_scoreThreshold);
+            float inferenceMs = (Time.realtimeSinceStartup - inferenceStartTime) * 1000f; // [BBB]
+            float scoreThreshold = ScoreThresholdOverride >= 0f ? ScoreThresholdOverride : m_scoreThreshold; // [BBB]
+            NonMaxSuppression(m_detections, boxes, classIDs, scores, m_iouThreshold, scoreThreshold);
+
+            // [BBB] Hand the results to the awareness layer. Done BEFORE the spatial-anchor check
+            // because our markers live in world space and don't depend on the sample's anchor.
+            if (m_cameraAccess.IsPlaying && !ExternalPause)
+            {
+                OnInferenceCompleted?.Invoke(m_detections, m_inputSize, cachedCameraPose, inferenceMs);
+            }
+
+            if (!m_drawSampleBoxes) // [BBB]
+            {
+                yield break;
+            }
 
             // Checking if spatial anchor is tracked ensures bounding boxes are placed at correct world space positIons.
             if (!m_cameraAccess.IsPlaying || m_detectionManager.m_spatialAnchor == null || !m_detectionManager.m_spatialAnchor.IsTracked)
@@ -162,10 +213,19 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             }
 
             // Update UI.
-            m_uiInference.DrawUIBoxes(m_detections, m_inputSize, cachedCameraPose);
+            m_detectionsForSampleUi.Clear(); // [BBB] sample UI expects the list without scores
+            foreach (var d in m_detections)
+            {
+                m_detectionsForSampleUi.Add((d.classId, d.boundingBox));
+            }
+            m_uiInference.DrawUIBoxes(m_detectionsForSampleUi, m_inputSize, cachedCameraPose);
         }
 
-        private static void NonMaxSuppression(List<(int classId, Vector4 boundingBox)> outDetections, Tensor<float> boxes, Tensor<int> classIDs, Tensor<float> scores, float iouThreshold, float scoreThreshold)
+        // [BBB] Changed: keeps the score, and suppression is class-aware. The original suppressed
+        // overlapping boxes regardless of class, so a person sitting on a chair could disappear.
+        // Now: same class -> normal NMS; different classes -> only suppressed when almost identical
+        // (IoU > 0.85), and a person box is never suppressed by a non-person box (people are priority).
+        private static void NonMaxSuppression(List<(int classId, Vector4 boundingBox, float score)> outDetections, Tensor<float> boxes, Tensor<int> classIDs, Tensor<float> scores, float iouThreshold, float scoreThreshold)
         {
             outDetections.Clear();
 
@@ -198,18 +258,23 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                 int idx = filteredIndices[i];
 
                 // Add this detection to results
-                outDetections.Add((classIDs[idx], GetBox(idx)));
+                outDetections.Add((classIDs[idx], GetBox(idx), scoresArray[idx])); // [BBB] keep score
 
-                // Suppress overlapping boxes regardless of class
+                // [BBB] Class-aware suppression (see comment above the method)
+                bool keptIsPerson = IsPersonClass(classIDs[idx]);
                 for (int j = i + 1; j < filteredIndices.Count; j++)
                 {
                     if (suppressed[j])
                         continue;
 
                     int jdx = filteredIndices[j];
+                    bool sameClass = classIDs[jdx] == classIDs[idx];
+                    if (!sameClass && IsPersonClass(classIDs[jdx]) && !keptIsPerson)
+                        continue; // never let an object hide a person
 
                     float iou = CalculateIoU(GetBox(idx), GetBox(jdx));
-                    if (iou > iouThreshold)
+                    float threshold = sameClass ? iouThreshold : 0.85f;
+                    if (iou > threshold)
                     {
                         suppressed[j] = true;
                     }
@@ -218,6 +283,9 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
             Vector4 GetBox(int i) => new Vector4(boxes[i, 0], boxes[i, 1], boxes[i, 2], boxes[i, 3]);
         }
+
+        // [BBB]
+        private static bool IsPersonClass(int classId) => classId >= 0 && classId < Labels.Length && Labels[classId] == "person";
 
         internal static float CalculateIoU(Vector4 boxA, Vector4 boxB)
         {

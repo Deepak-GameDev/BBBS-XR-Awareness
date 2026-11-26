@@ -54,20 +54,9 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     m_isStarted = true;
                 }
             }
-            else
-            {
-                // Press A button to spawn 3d markers
-                if (InputManager.IsButtonADownOrPinchStarted())
-                {
-                    SpawnCurrentDetectedObjects();
-                }
-            }
-
-            // Press B button to clean all markers
-            if (InputManager.IsButtonBDownOrMiddleFingerPinchStarted())
-            {
-                CleanMarkers();
-            }
+            // [BBB] Removed the sample's A (spawn marker) / B (clear markers) controls.
+            // A and B are now used by our AwarenessControls (pause / people-only filter),
+            // and our tracker places and removes markers automatically.
         }
 
         private IEnumerator UpdateSpatialAnchor()
