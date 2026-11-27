@@ -20,7 +20,7 @@ namespace BBB.Awareness
     /// </summary>
     public class HudPresenter : MonoBehaviour
     {
-        public Vector3 HeadOffset = new Vector3(0f, -0.30f, 0.75f);  // metres, in head space (low in the view)
+        public Vector3 HeadOffset = new Vector3(0f, -0.30f, 0.6f);  // metres, in head space (low in the view)
         public float FollowSharpness = 8f;                             // higher = follows faster
         public float RefreshInterval = 0.2f;                           // text updates 5x per second
 
