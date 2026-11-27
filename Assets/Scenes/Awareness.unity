@@ -350,6 +350,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: ReturnToStartScene
       objectReference: {fileID: 0}
+    - target: {fileID: 2073883202203575103, guid: 6c8f51c0c4ebe4902a313954838e1de9, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -1703,6 +1707,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: DetectionUiMenuPrefab
       objectReference: {fileID: 0}
+    - target: {fileID: 8722207748505512710, guid: 259c0c899b7e0c14aa431eefdc0aacc6, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 8722207748505512711, guid: 259c0c899b7e0c14aa431eefdc0aacc6, type: 3}
       propertyPath: m_Pivot.x
       value: 0.5
@@ -1947,6 +1955,10 @@ PrefabInstance:
     - target: {fileID: 5228241647023865434, guid: 927c1b782bb796b4b9b433d533cbccca, type: 3}
       propertyPath: m_Name
       value: SentisInferenceManagerPrefab
+      objectReference: {fileID: 0}
+    - target: {fileID: 7376517437398570920, guid: 927c1b782bb796b4b9b433d533cbccca, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 7913708705614608778, guid: 927c1b782bb796b4b9b433d533cbccca, type: 3}
       propertyPath: m_LocalPosition.x

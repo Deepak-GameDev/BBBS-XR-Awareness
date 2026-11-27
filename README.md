@@ -1,111 +1,145 @@
-# Unity-PassthroughCameraAPISamples
+# Situational Awareness for Meta Quest 3
 
-## Project Overview
+A mixed-reality app for **Meta Quest 3** that detects **people and everyday objects** in real time, **entirely on the headset**, and shows them as world-anchored markers in passthrough, with a head-locked HUD and a top-down radar.
 
-The **Unity-PassthroughCameraAPISamples** project helps Unity developers access Quest camera data using the **PassthroughCameraAccess** component from the Mixed Reality Utility Kit (MRUK). This component provides direct access to headset cameras with enhanced functionality including:
-- **Precise timestamps** for better camera-world alignment
-- **Simultaneous access to both cameras** (left and right)
-- **Complete camera metadata** including intrinsics, extrinsics, and pose information
+Each marker shows **what** the item is, **how confident** the model is, and **how far away** it is. People are highlighted differently from objects. The radar also shows tracked items that are **outside the user's field of view**.
 
-The project includes **five sample scenes** demonstrating various use cases:
+> Demo video: `[https://youtu.be/FYmLhZDalBQ]` · APK: see **Releases** on this repository
 
-| CameraToWorld | BrightnessEstimation | MultiObjectDectection | ShaderSample |
-|:-------------:|:--------------------:|:---------------------:|:------------:|
-| ![GIF 1](./Media/CameraToWorld.gif) | ![GIF 2](./Media/BrightnessEstimation.gif) | ![GIF 3](./Media/ObjectDetectionSentis.gif) | ![GIF 4](./Media/ShaderSample.gif) |
+---
 
-## Documentation
+## Features
 
-For comprehensive guides, API reference, and tutorials, visit the official Meta Developers documentation:
+| Requirement | How it is done |
+|---|---|
+| Camera access + permissions | MRUK `PassthroughCameraAccess`. If camera or spatial-data permission is missing, the HUD shows a clear message (no crash). |
+| On-device detection | YOLO (from Meta's sample) running in **Unity Inference Engine** on the headset. No network. |
+| People as priority | Class-aware NMS: an object box can **never** suppress a person box; people are drawn larger, in orange, with an extra ring; people-only filter. |
+| World-anchored markers | 2D box → 5 depth raycasts inside the box (MRUK `EnvironmentRaycastManager`) → **median** hit distance → 3D point. Uses the camera pose **at capture time**. |
+| Labels | `PERSON #3` / `87% · 2.4 m`. Billboarded, constant apparent size. |
+| Tracking | Own tracker: stable IDs, greedy matching (class + distance gate), adaptive smoothing, confirmation after 2 hits, fade-out when lost. |
+| HUD | Head-locked (smoothed), low in the view: people, objects, inference time, model rate, FPS, state. |
+| Radar | Bearing + range relative to the user (forward = up), 6 m range, FOV lines; filled dot = in view, hollow ring = outside view. |
+| Controls | **A** pause/resume · **B** people-only · **Right stick ↑/↓** threshold ±5% (10–90%). Haptic feedback. |
+| Performance | 72 FPS measured on Quest 3. Inference is asynchronous and never blocks rendering. |
 
-- **[Passthrough Camera API Overview](https://developers.meta.com/horizon/documentation/unity/unity-pca-overview)** - Introduction and key concepts
-- **[Getting Started Guide](https://developers.meta.com/horizon/documentation/unity/unity-pca-documentation)** - Setup, configuration, and usage instructions
-- **[Unity Inference Engine Integration](https://developers.meta.com/horizon/documentation/unity/unity-pca-sentis)** - Using ML/CV models with PCA
-- **[Migration Guide](https://developers.meta.com/horizon/documentation/unity/unity-pca-migration-from-webcamtexture)** - Migrating from WebCamTexture
+---
 
-## Requirements
+## Requirements & versions
 
-- **Unity:** 6000.0.38f1 or newer
-- **Packages:**
-  - [Meta MRUK](https://assetstore.unity.com/packages/tools/integration/meta-mr-utility-kit-272450) (v81 or higher)
-  - [Unity Inference Engine](https://unity.com/sentis) (v2.2.1 for MultiObjectDetection sample)
-- **Hardware:** Quest 3 / Quest 3S with Horizon OS v74 or higher
-- **Permissions:** `horizonos.permission.HEADSET_CAMERA`
-- **Passthrough:** Must be enabled in your project
+| Item | Version |
+|---|---|
+| Unity | **6000.3.14f1** (Unity 6.3 LTS) with Android Build Support (OpenJDK, SDK, NDK) |
+| Meta MR Utility Kit (MRUK) | `com.meta.xr.mrutilitykit` **85.0.0** (pulls in Meta XR Core SDK) |
+| Unity Inference Engine | `com.unity.ai.inference` **2.6.1** |
+| OpenXR / XR Management | `com.unity.xr.openxr` 1.16.1 · `com.unity.xr.management` 4.5.4 |
+| Device | Meta Quest 3 / 3S, Horizon OS **v81+** (`PassthroughCameraAccess` requires v81) |
+| Model | YOLOv9 (tiny) exported to `.sentis`, from Meta's sample (stored with **Git LFS**) |
 
-> [!NOTE]
-> You must use a physical headset or Meta Horizon Link v2.1 or later to preview the passthrough camera. XR Simulator does not currently support Passthrough Camera API.
+## Setup & build
 
-## Download the Project
+1. Install **Git LFS** (`git lfs install`), then clone this repository. Check that the model files are real (several MB), not LFS pointers: if they are ~1 KB, run `git lfs pull`.
+2. Open the project in **Unity 6000.3.14f1** (Unity Hub → Add project from disk).
+3. **File → Build Profiles → Android → Switch Platform.**
+4. Open the scene `Assets/PassthroughCameraApiSamples/MultiObjectDetection/MultiObjectDetection.unity`.
+5. Headset in **Developer Mode**, connected by USB, **Allow USB debugging**.
+6. **Build Profiles → Run Device: Quest 3 → Build And Run**.
+7. On first launch, **allow** camera and spatial data permissions. Detection starts automatically.
 
-First, ensure you have Git LFS installed by running this command:
+**Install the prebuilt APK instead:** download `app.apk` from Releases, then use sidequest to upload the .apk`. Launch from *Library → Unknown Sources*.
 
-```bash
-git lfs install
+**Test in the Editor (no headset):** press Play. A built-in **detection simulator** creates fake people/objects so the tracker, markers, HUD, radar and controls can be tested. Keys: **Q/E** turn, **P** pause, **O** people-only, **↑/↓** threshold.
+
+## Controls
+
+| Quest controller | Editor key | Action |
+|---|---|---|
+| **A** | P | Pause / resume detection |
+| **B** | O | Toggle people-only filter |
+| **Right thumbstick up / down** | ↑ / ↓ | Raise / lower confidence threshold (5% steps, 10–90%, default 45%) |
+
+---
+
+## Architecture
+
+```
+ PassthroughCameraAccess (MRUK)
+          │ camera frame + camera pose at capture time
+          ▼
+ SentisInferenceRunManager   (Meta sample, modified)
+   YOLO on Inference Engine, async readback, class-aware NMS
+          │ OnInferenceCompleted(2D boxes + scores, capture pose, ms)
+          ▼
+ AwarenessPipeline ──► DetectionProjector ──► DetectionTracker
+   (glue + stats)       5 depth rays, median     stable IDs, smoothing,
+                        → 3D world point          confirm / fade-out
+                                                    │
+          ┌──────────────────────┬──────────────────┤
+          ▼                      ▼                  ▼
+   MarkerManager/MarkerView   HudPresenter      RadarView
+   (pooled world labels)      (head-locked)     (bearing + range)
+
+ AwarenessState  ◄── AwarenessControls (A / B / right stick)
+   paused · people-only · threshold   (read by inference, markers, HUD, radar)
+
+ AwarenessBootstrap: the single scene component that wires everything up.
+ DetectionSimulator: Editor-only fake detections for testing without a headset.
 ```
 
-Then, clone this repo using the "Code" button above, or this command:
+The Meta sample code cannot reference project code, so the sample exposes **static hooks** (an event plus pause/threshold fields) and the awareness layer subscribes to them. This keeps the changes to the sample small and easy to review.
 
-```bash
-git clone https://github.com/oculus-samples/Unity-PassthroughCameraApiSamples
-```
+---
 
-## Project Content
+## What was reused vs. written
 
-The project contains **five sample scenes** that demonstrate how to use the **PassthroughCameraAccess** component to access Quest camera data. All sample code and resources are located in the [**`PassthroughCameraApiSamples`**](./Assets/PassthroughCameraApiSamples/) folder:
+**Reused: Meta's [Unity-PassthroughCameraApiSamples](https://github.com/oculus-samples/Unity-PassthroughCameraApiSamples), MultiObjectDetection sample**
+- Camera capture (`PassthroughCameraAccess`), permission request flow and scene setup
+- YOLO model, labels, and inference loop (`SentisInferenceRunManager`)
+- Depth raycasting component (`EnvironmentRaycastManager`, from MRUK)
 
-### Samples
+**Modified sample files** (every change is marked `// [BBB]`)
+| File | Change |
+|---|---|
+| `SentisInferenceRunManager.cs` | Keeps confidence scores; **class-aware NMS** (objects never hide people); event with detections + capture pose + inference time; external pause and threshold; sample's own 2D boxes off |
+| `DetectionManager.cs` | Removed sample's A/B marker controls (buttons reused); disabled the spatial anchor (not needed, and saving fails for sideloaded apps) |
+| `DetectionUiMenuManager.cs` | Auto-start once permissions are granted; hides the sample's info panel |
 
-* **[`CameraViewer`](./Assets/PassthroughCameraApiSamples/CameraViewer)** - Displays a 2D canvas with camera feed
-* **[`CameraToWorld`](./Assets/PassthroughCameraApiSamples/CameraToWorld)** - Aligns RGB camera pose with Passthrough and transforms 2D coordinates to 3D world space rays
-* **[`BrightnessEstimation`](./Assets/PassthroughCameraApiSamples/BrightnessEstimation)** - Adapts the experience based on environment brightness
-* **[`MultiObjectDetection`](./Assets/PassthroughCameraApiSamples/MultiObjectDetection)** - Uses Unity Inference Engine for real-world object recognition
-* **[`ShaderSample`](./Assets/PassthroughCameraApiSamples/ShaderSample)** - Applies custom GPU effects to camera texture
+**Written for this project: `Assets/_Project/Scripts/`**
+| File | Purpose |
+|---|---|
+| `AwarenessBootstrap.cs` | Single scene component; finds sample objects and creates all systems |
+| `AwarenessPipeline.cs` | Receives detections, projects to 3D, feeds the tracker, keeps stats |
+| `DetectionProjector.cs` | Multi-ray median depth projection (person: torso-biased sample points) |
+| `DetectionTracker.cs` | Stable IDs, greedy gated matching, adaptive smoothing, confirmation, in-view-aware removal |
+| `MarkerView.cs`, `MarkerManager.cs` | World labels with fade in/out, billboarding, distance scaling, pooling |
+| `HudPresenter.cs` | Head-locked HUD + permission/status banner |
+| `RadarView.cs` | Top-down radar |
+| `AwarenessControls.cs` | Controller input + haptics |
+| `AwarenessState.cs` | Shared user settings (pause, filter, threshold) |
+| `UiFactory.cs` | Builds world-space UI from code (no prefabs to wire) |
+| `DetectionSimulator.cs`, `EditorKeys.cs` | Editor-only testing without a headset |
 
-### Additional Components
+---
 
-* **[`PassthroughCamera`](./Assets/PassthroughCameraApiSamples/PassthroughCamera)** - C# classes and utilities for camera access
-* **[`StartScene`](./Assets/PassthroughCameraApiSamples/StartScene)** - Menu scene for switching between samples
+## Assumptions
 
-## Getting Started
+- **"Common objects"** = the 80 COCO classes the pretrained YOLO model knows (chair, bottle, laptop, cup, …).
+- **Distance** = straight-line distance from the user's head to the detected point, in metres.
+- **People priority** = never suppressed by objects in NMS, stronger visual style, people-only filter, counted separately in the HUD.
+- **Head-locked HUD** = follows the head with light smoothing, placed about 22° below eye level so it does not cover the view.
+- **Radar** shows items up to 6 m (further items are pinned to the edge). Items outside the view are remembered for 20 s at their last known position.
+- No persistence between sessions is required, so spatial anchors are not used.
 
-1. Clone the GitHub project as described [above](#download-the-project)
-2. Open the project with **Unity 6000.0.38f1** or newer
-3. Open a sample scene from the **[`PassthroughCameraApiSamples`](./Assets/PassthroughCameraApiSamples/)** folder
-4. Use **Meta > Tools > Project Setup Tool** to fix any configuration issues
-5. Build and deploy to your Quest 3/3S device
+## Known limitations
 
-For detailed setup instructions, API reference, and usage examples, see the **[Getting Started Guide](https://developers.meta.com/horizon/documentation/unity/unity-pca-documentation)**.
+- **Depth needs a surface:** detections whose rays don't hit the environment mesh (very thin objects, glass, far away) are skipped rather than placed at a guessed distance.
+- **Class changes:** if the model flips between similar classes (cup ↔ bowl), a new ID can appear for a moment.
+- **Moving objects:** smoothing adds a short lag; fast-moving people trail slightly.
+- **Occlusion:** a person hidden behind furniture is removed after ~1.2 s and gets a new ID when seen again (no re-identification, by design for privacy).
+- **Model:** the small YOLO variant trades accuracy for speed; small/far objects are detected less reliably.
+- **Editor:** Meta camera/depth APIs log "not supported" errors in the Editor (they only work on device); the simulator is used instead.
+- **Model license:** the YOLO weights come from Meta's sample; check the model's license before any commercial use.
 
-## Learn More
+## Privacy
 
-For comprehensive information about using the Passthrough Camera API:
-
-- **Setup & Configuration** - [Getting Started Guide](https://developers.meta.com/horizon/documentation/unity/unity-pca-documentation)
-- **Unity Inference Engine Integration** - [ML/CV with PCA](https://developers.meta.com/horizon/documentation/unity/unity-pca-sentis)
-- **Troubleshooting** - See the troubleshooting section in the [Getting Started Guide](https://developers.meta.com/horizon/documentation/unity/unity-pca-documentation#troubleshooting)
-
-## Report an Issue
-
-If you encounter any issues, please report them with:
-
-- **Unity Engine version**
-- **XR plugin** (Oculus XR or Open XR) and version number
-- **Quest device** model and **Horizon OS version**
-- **Logcat logs** (use `adb logcat >> log.txt`)
-- **Video or screenshot** of the issue
-- **Relevant information** about your use case
-
-## License
-
-The [`Oculus License`](./LICENSE.txt) applies to the SDK and supporting material. The [`MIT License`](./Assets/PassthroughCameraApiSamples/LICENSE.txt) applies to only certain, clearly marked documents. If an individual file does not indicate which license it is subject to, then the Oculus License applies.
-
-However,
-* Files from [`Assets/PassthroughCameraApiSamples/MultiObjectDetection/SentisInference/Model`](./Assets/PassthroughCameraApiSamples/MultiObjectDetection/SentisInference/Model) are licensed under [`MIT`](https://github.com/MultimediaTechLab/YOLO/blob/main/LICENSE).
-
-See the [`CONTRIBUTING`](./CONTRIBUTING.md) file for how to help out.
-
-## AI coding agents
-
-This repo is wired up for AI coding agents — `AGENTS.md`, `.vscode/extensions.json`, `.mcp.json`, `.cursor/rules/`, and a few client-specific dotfiles surface the **Meta Horizon** VS Code/Cursor extension, the `hzdb` MCP server, and the Meta Quest skill set automatically.
-
-Full toolchain, including Unity skills and per-client install instructions: [github.com/meta-quest/agentic-tools](https://github.com/meta-quest/agentic-tools).
+Camera frames are processed **in memory only** for inference and are **never stored, recorded or transmitted**. There is no face recognition or identification of individuals; "person" is only a class label, and IDs are temporary tracking numbers that reset when the app restarts.
