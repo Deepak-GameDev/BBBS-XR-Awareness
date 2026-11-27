@@ -18,14 +18,11 @@
 
 - **Hardware access:** I only had a Quest 2 (no camera access or depth), so headset time was short. The simulator was the workaround.
 - **Git LFS:** model files ended up as LFS pointer files locally, so Unity could not load the model; fixed with `git lfs pull`.
-- **Spatial anchor error:** the sample saves an anchor, which fails for sideloaded apps. Our markers don't need anchors, so I disabled it.
-- **Input System:** editor test keys first used the legacy Input API, which throws when the project uses the new Input System; fixed with a helper supporting both.
+- **Input System:** my editor test keys used Unity's old input system, but the project uses the new Input System, so they caused errors; fixed with a small helper that supports both.
 - **Jitter:** label stepping from the low detection rate; fixed with per-frame interpolation and adaptive smoothing.
 
 ## With another week
 
-- **Better tracking:** Kalman filter with velocity (ByteTrack-style), so moving people are predicted instead of lagging, and occlusions are bridged.
-- **Performance:** split inference across frames (`ScheduleIterable`), test GPU vs CPU backends, quantised or smaller input; measure with OVR Metrics Tool and profile thermals.
-- **Placement:** use the depth texture directly to estimate object size and a 3D bounding box instead of a single point.
-- **UX:** spatial audio or haptic cue when a person enters from outside the view; edge arrows for off-screen people; user-adjustable HUD position.
-- **Robustness:** automated tests for the tracker using recorded detection logs; graceful handling of tracking loss.
+- **Smoother labels on moving people:** the tracker currently averages positions, so a walking person's label trails slightly behind. I would also track each item's speed and direction to predict where it will be next frame.
+- **Alert for people behind you:** a short controller vibration or sound when a new person appears on the radar outside the field of view, so the user doesn't have to keep checking the radar.
+- **User settings:** let the user move or resize the HUD and change the radar range with the controller.
