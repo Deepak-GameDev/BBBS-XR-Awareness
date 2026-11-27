@@ -1,4 +1,4 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates.
+﻿// Copyright (c) Meta Platforms, Inc. and affiliates.
 
 using System.Collections;
 using System.Collections.Generic;
@@ -27,9 +27,17 @@ namespace PassthroughCameraSamples.MultiObjectDetection
         internal OVRSpatialAnchor m_spatialAnchor;
         private bool m_isHeadsetTracking;
 
+        // [BBB] The awareness markers are placed directly in world space using depth raycasts,
+        // so the sample's spatial anchor is not needed. Saving anchors also fails for sideloaded
+        // (non-Store) apps and showed an error panel, so it is disabled by default.
+        [SerializeField] private bool m_useSpatialAnchor = false;
+
         private void Awake()
         {
-            StartCoroutine(UpdateSpatialAnchor());
+            if (m_useSpatialAnchor) // [BBB]
+            {
+                StartCoroutine(UpdateSpatialAnchor());
+            }
             OVRManager.TrackingLost += OnTrackingLost;
             OVRManager.TrackingAcquired += OnTrackingAcquired;
         }

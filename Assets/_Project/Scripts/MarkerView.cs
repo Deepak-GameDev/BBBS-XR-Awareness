@@ -15,6 +15,7 @@ namespace BBB.Awareness
     {
         private const float FadeSpeed = 1f / 0.35f;     // full fade in 0.35 s
         private const float MetersPerUnitPerMeter = 0.00028f; // label size grows with distance -> constant apparent size
+        private const float FollowSharpness = 12f;  // per-frame interpolation towards the track position
 
         public int TrackId { get; private set; }
         public bool IsFullyHidden => m_alpha <= 0.001f && m_targetAlpha <= 0f;
@@ -90,7 +91,10 @@ namespace BBB.Awareness
         /// <summary>Called every frame while the track exists.</summary>
         public void UpdateFromTrack(TrackedDetection track, Transform head)
         {
-            transform.position = track.Position; // tracker already smooths the position
+            // Detections arrive ~10x per second but we render at 72 fps: glide towards the
+            // latest tracked position every frame instead of jumping (removes visible stepping).
+            float t = 1f - Mathf.Exp(-FollowSharpness * Time.deltaTime);
+            transform.position = Vector3.Lerp(transform.position, track.Position, t);
 
             // Only rebuild the string when the shown values change (saves garbage/CPU).
             string detail = $"{Mathf.RoundToInt(track.Confidence * 100f)}%  ·  {track.Distance:0.0} m";

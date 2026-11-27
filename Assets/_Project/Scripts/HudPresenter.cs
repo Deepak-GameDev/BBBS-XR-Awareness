@@ -6,17 +6,25 @@ using UnityEngine.UI;
 namespace BBB.Awareness
 {
     /// <summary>
-    /// Head-locked HUD panel (follows the head smoothly, sits slightly below eye level):
-    ///   left : people count, total detections, inference time, inference rate, frame rate
-    ///   right: radar
-    ///   bottom: current state (live / paused, people-only filter, threshold), controls help,
-    ///           and clear status messages (camera permission missing, camera starting...)
+    /// Compact head-locked HUD. It sits low in the view (about 22 degrees below eye level) so it
+    /// never covers what the user is looking at, but is readable with a quick glance down.
+    ///
+    ///  +----------+-----------------------+----------------+
+    ///  |  RADAR   |   2 PEOPLE  3 OBJECTS  |  LIVE          |
+    ///  |          |   48 ms     72 fps     |  People: OFF   |
+    ///  |          |                       |  Thr: 45%      |
+    ///  |          |  A pause  B people  R-stick threshold  |
+    ///  +----------+-----------------------+----------------+
+    /// A status banner appears above the panel only when something needs attention
+    /// (e.g. camera permission missing).
     /// </summary>
     public class HudPresenter : MonoBehaviour
     {
-        public Vector3 HeadOffset = new Vector3(0f, -0.26f, 0.85f);  // metres, in head space
+        public Vector3 HeadOffset = new Vector3(0f, -0.30f, 0.75f);  // metres, in head space (low in the view)
         public float FollowSharpness = 8f;                             // higher = follows faster
         public float RefreshInterval = 0.2f;                           // text updates 5x per second
+
+        private const float MetersPerUnit = 0.00048f;                  // 720 units wide -> about 35 cm at 75 cm away
 
         private AwarenessPipeline m_pipeline;
         private Transform m_head;
@@ -24,9 +32,16 @@ namespace BBB.Awareness
         private DetectionUiMenuManager m_menu;
 
         private Transform m_canvasTransform;
-        private Text m_stats;
-        private Text m_state;
+        private Text m_peopleValue;
+        private Text m_objectsValue;
+        private Text m_inferenceValue;
+        private Text m_modelRate;
+        private Text m_fpsValue;
+        private Text m_liveState;
+        private Text m_filterState;
+        private Text m_thresholdState;
         private Text m_status;
+        private Image m_statusBackground;
 
         private float m_nextRefresh;
         private int m_frameCount;
@@ -43,27 +58,59 @@ namespace BBB.Awareness
             Build();
         }
 
+        // ---------------------------------------------------------------------------------
+        // LAYOUT. All positions are in UI units, measured from the panel centre (x right, y up).
+        // The panel is PanelSize wide/tall; 1 unit = MetersPerUnit metres in the world.
+        // To restyle the HUD, change the numbers in this method.
+        // ---------------------------------------------------------------------------------
+        private static readonly Vector2 PanelSize = new Vector2(720, 220);
+
         private void Build()
         {
-            var canvas = UiFactory.CreateWorldCanvas("HUD", null, new Vector2(620, 330), 0.00062f);
+            var canvas = UiFactory.CreateWorldCanvas("HUD", null, PanelSize, MetersPerUnit);
             m_canvasTransform = canvas.transform;
             var root = (RectTransform)canvas.transform;
+            var dividerColor = new Color(1f, 1f, 1f, 0.12f);
 
-            UiFactory.CreateImage("Panel", root, Vector2.zero, new Vector2(620, 330), UiFactory.PanelColor);
+            // Background: transparent enough that the real world shows through.
+            UiFactory.CreateImage("Panel", root, Vector2.zero, PanelSize, new Color(0.04f, 0.05f, 0.07f, 0.55f));
 
-            var title = UiFactory.CreateText("Title", root, new Vector2(-150, 135), new Vector2(300, 40), 26, TextAnchor.MiddleLeft, UiFactory.DimTextColor, FontStyle.Bold);
-            title.text = "SITUATIONAL AWARENESS";
+            // LEFT column (x -360 .. -150): radar
+            RadarView.Create(root, new Vector2(-255, 0), 190f, m_pipeline, m_head);
+            UiFactory.CreateImage("Divider1", root, new Vector2(-145, 0), new Vector2(2, 190), dividerColor);
 
-            m_stats = UiFactory.CreateText("Stats", root, new Vector2(-150, 30), new Vector2(300, 170), 30, TextAnchor.UpperLeft, UiFactory.TextColor);
-            m_stats.lineSpacing = 1.15f;
+            // MIDDLE column (x -140 .. 120): 2x2 stat grid, each cell 125 wide
+            m_peopleValue = CreateStat(root, new Vector2(-75, 52), "people", UiFactory.PersonColor);
+            m_objectsValue = CreateStat(root, new Vector2(55, 52), "objects", UiFactory.ObjectColor);
+            m_inferenceValue = CreateStat(root, new Vector2(-75, -22), "inference", UiFactory.TextColor);
+            m_fpsValue = CreateStat(root, new Vector2(55, -22), "fps", UiFactory.TextColor);
+            UiFactory.CreateImage("Divider2", root, new Vector2(125, 10), new Vector2(2, 150), dividerColor);
 
-            m_state = UiFactory.CreateText("State", root, new Vector2(0, -105), new Vector2(580, 34), 26, TextAnchor.MiddleLeft, UiFactory.TextColor, FontStyle.Bold);
-            var help = UiFactory.CreateText("Help", root, new Vector2(0, -138), new Vector2(580, 30), 22, TextAnchor.MiddleLeft, UiFactory.DimTextColor);
-            help.text = "A: pause/resume    B: people only    Right stick up/down: threshold";
+            // RIGHT column (x 140 .. 350): current state, left aligned
+            const float rightX = 245f;      // centre of a 210-wide column -> starts at x 140
+            const float rightWidth = 210f;
+            m_liveState = UiFactory.CreateText("Live", root, new Vector2(rightX, 66), new Vector2(rightWidth, 30), 22, TextAnchor.MiddleLeft, UiFactory.TextColor, FontStyle.Bold);
+            m_filterState = UiFactory.CreateText("Filter", root, new Vector2(rightX, 34), new Vector2(rightWidth, 26), 19, TextAnchor.MiddleLeft, UiFactory.TextColor);
+            m_thresholdState = UiFactory.CreateText("Threshold", root, new Vector2(rightX, 6), new Vector2(rightWidth, 26), 19, TextAnchor.MiddleLeft, UiFactory.TextColor);
+            m_modelRate = UiFactory.CreateText("ModelRate", root, new Vector2(rightX, -22), new Vector2(rightWidth, 26), 19, TextAnchor.MiddleLeft, UiFactory.DimTextColor);
 
-            m_status = UiFactory.CreateText("Status", root, new Vector2(0, 185), new Vector2(620, 40), 26, TextAnchor.MiddleCenter, new Color(1f, 0.85f, 0.3f), FontStyle.Bold);
+            // BOTTOM row (under middle + right columns): controls help
+            var help = UiFactory.CreateText("Help", root, new Vector2(105, -88), new Vector2(480, 26), 17, TextAnchor.MiddleCenter, UiFactory.DimTextColor);
+            help.text = "A  pause        B  people only        R-stick  threshold";
 
-            RadarView.Create(root, new Vector2(175, 35), 190f, m_pipeline, m_head);
+            // Status banner above the panel, only visible when there is a message
+            m_statusBackground = UiFactory.CreateImage("StatusBg", root, new Vector2(0, 140), new Vector2(PanelSize.x, 40), new Color(0.35f, 0.22f, 0f, 0.8f));
+            m_status = UiFactory.CreateText("Status", m_statusBackground.transform, Vector2.zero, new Vector2(PanelSize.x - 20f, 36), 21, TextAnchor.MiddleCenter, new Color(1f, 0.88f, 0.4f), FontStyle.Bold);
+            m_statusBackground.gameObject.SetActive(false);
+        }
+
+        /// <summary>A big number with a small caption under it.</summary>
+        private static Text CreateStat(RectTransform root, Vector2 pos, string caption, Color valueColor)
+        {
+            var value = UiFactory.CreateText("Value", root, pos, new Vector2(125, 46), 42, TextAnchor.MiddleCenter, valueColor, FontStyle.Bold);
+            var captionText = UiFactory.CreateText("Caption", root, pos + new Vector2(0, -32), new Vector2(125, 22), 16, TextAnchor.MiddleCenter, UiFactory.DimTextColor);
+            captionText.text = caption.ToUpperInvariant();
+            return value;
         }
 
         private void LateUpdate()
@@ -85,6 +132,7 @@ namespace BBB.Awareness
         private void FollowHead()
         {
             Vector3 targetPos = m_head.position + m_head.rotation * HeadOffset;
+            // Face the eyes: the panel tilts up towards the user, which keeps it readable low in the view.
             Quaternion targetRot = Quaternion.LookRotation(targetPos - m_head.position, m_head.up);
 
             if (!m_placed)
@@ -115,37 +163,43 @@ namespace BBB.Awareness
         private void RefreshText()
         {
             int people = 0;
-            int total = 0;
+            int objects = 0;
             foreach (var track in m_pipeline.Tracker.Tracks)
             {
                 if (!track.Confirmed || !AwarenessState.PassesFilter(track))
                 {
                     continue;
                 }
-                total++;
                 if (track.IsPerson)
                 {
                     people++;
                 }
+                else
+                {
+                    objects++;
+                }
             }
 
-            string personHex = ColorUtility.ToHtmlStringRGB(UiFactory.PersonColor);
-            string objectHex = ColorUtility.ToHtmlStringRGB(UiFactory.ObjectColor);
-            m_stats.text =
-                $"<color=#{personHex}>People</color>          <b>{people}</b>\n" +
-                $"<color=#{objectHex}>Detections</color>    <b>{total}</b>\n" +
-                $"Inference       <b>{m_pipeline.LastInferenceMs:0} ms</b>\n" +
-                $"Model rate     <b>{m_pipeline.InferencesPerSecond:0.0} /s</b>\n" +
-                $"Frame rate     <b>{m_fps:0} fps</b>";
+            m_peopleValue.text = people.ToString();
+            m_objectsValue.text = AwarenessState.PeopleOnly ? "-" : objects.ToString();
+            m_inferenceValue.text = $"{m_pipeline.LastInferenceMs:0}<size=22> ms</size>";
+            m_modelRate.text = $"Model runs: {m_pipeline.InferencesPerSecond:0.0}/s";
+            m_fpsValue.text = $"{m_fps:0}";
 
-            string live = AwarenessState.Paused ? "<color=#FFC040>|| PAUSED</color>" : "<color=#50E080>LIVE</color>";
-            if (AwarenessState.SimulationActive)
+            if (AwarenessState.Paused)
             {
-                live += " <color=#B0B0FF>(SIMULATION)</color>";
+                m_liveState.text = "<color=#FFC040>|| PAUSED</color>";
             }
-            m_state.text = $"{live}    People only: {(AwarenessState.PeopleOnly ? "ON" : "OFF")}    Threshold: {AwarenessState.ConfidenceThreshold * 100f:0}%";
+            else
+            {
+                m_liveState.text = AwarenessState.SimulationActive ? "<color=#B0B0FF>SIMULATED</color>" : "<color=#50E080>LIVE</color>";
+            }
+            m_filterState.text = AwarenessState.PeopleOnly ? "People only: <b>ON</b>" : "People only: OFF";
+            m_thresholdState.text = $"Threshold: <b>{AwarenessState.ConfidenceThreshold * 100f:0}%</b>";
 
-            m_status.text = GetStatusMessage();
+            string status = GetStatusMessage();
+            m_statusBackground.gameObject.SetActive(!string.IsNullOrEmpty(status));
+            m_status.text = status;
         }
 
         /// <summary>Clear message when something prevents detection (requirement: handle denied permission gracefully).</summary>
@@ -162,7 +216,7 @@ namespace BBB.Awareness
             }
             if (!OVRPermissionsRequester.IsPermissionGranted(OVRPermissionsRequester.Permission.Scene))
             {
-                return "Spatial data permission needed for distance: enable it in Settings, then restart";
+                return "Spatial data permission needed for distance: enable in Settings, then restart";
             }
 #endif
             if (m_menu != null && m_menu.IsPaused && !AwarenessState.Paused)

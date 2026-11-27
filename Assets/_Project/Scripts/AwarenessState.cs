@@ -13,7 +13,7 @@ namespace BBB.Awareness
         public const float MinThreshold = 0.10f;
         public const float MaxThreshold = 0.90f;
         public const float ThresholdStep = 0.05f;
-        public const float DefaultThreshold = 0.40f;
+        public const float DefaultThreshold = 0.45f; // best balance found in headset testing
 
         public static bool Paused { get; private set; }
         public static bool PeopleOnly { get; private set; }

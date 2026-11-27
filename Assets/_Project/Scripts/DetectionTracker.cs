@@ -52,7 +52,12 @@ namespace BBB.Awareness
         // Tuning values (explained in the README)
         public float MatchGateMeters = 0.45f;        // base max distance to match a detection to a track
         public float MatchGatePerMeter = 0.12f;      // extra gate per metre of distance from the user
-        public float PositionSmoothing = 0.35f;      // 0..1, how much a new measurement moves the track
+        // Adaptive smoothing: small changes are mostly depth/box noise -> damp strongly;
+        // big changes mean the object really moved -> follow quickly.
+        public float NoiseSmoothing = 0.12f;         // used when the change is below NoiseBandMeters
+        public float MotionSmoothing = 0.45f;        // used when the change is clearly real movement
+        public float NoiseBandMeters = 0.06f;
+        public float MotionBandMeters = 0.25f;
         public float ConfidenceSmoothing = 0.30f;
         public int HitsToConfirm = 2;
         public float TentativeTimeout = 0.8f;        // unconfirmed tracks die after this many seconds
@@ -110,7 +115,10 @@ namespace BBB.Awareness
                 // 3. Update the matched track with smoothing
                 var track = m_tracks[pair.track];
                 var det = detections[pair.detection];
-                track.Position = Vector3.Lerp(track.Position, det.Position, PositionSmoothing);
+                float change = Vector3.Distance(track.Position, det.Position);
+                float k = Mathf.InverseLerp(NoiseBandMeters, MotionBandMeters, change);
+                float smoothing = Mathf.Lerp(NoiseSmoothing, MotionSmoothing, k);
+                track.Position = Vector3.Lerp(track.Position, det.Position, smoothing);
                 track.Confidence = Mathf.Lerp(track.Confidence, det.Confidence, ConfidenceSmoothing);
                 track.Hits++;
                 track.LastSeen = now;

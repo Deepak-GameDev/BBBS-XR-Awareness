@@ -55,7 +55,7 @@ namespace BBB.Awareness
             // The user (centre)
             UiFactory.CreateImage("User", root, Vector2.zero, new Vector2(14, 14), Color.white, UiFactory.Circle());
 
-            var rangeLabel = UiFactory.CreateText("RangeLabel", root, new Vector2(0, -d * 0.5f - 12f), new Vector2(160, 30), 22, TextAnchor.MiddleCenter, UiFactory.DimTextColor);
+            var rangeLabel = UiFactory.CreateText("RangeLabel", root, new Vector2(d * 0.4f, d * 0.45f), new Vector2(60, 24), 16, TextAnchor.MiddleCenter, UiFactory.DimTextColor);
             rangeLabel.text = $"{RangeMeters:0} m";
 
             m_dotsRoot = UiFactory.CreateRect("Dots", root, Vector2.zero, new Vector2(d, d), new Vector2(0.5f, 0.5f));
@@ -106,7 +106,7 @@ namespace BBB.Awareness
                 dot.rectTransform.anchoredPosition = pos;
                 dot.sprite = track.InView ? m_filled : m_hollow;
                 dot.color = track.IsPerson ? UiFactory.PersonColor : UiFactory.ObjectColor;
-                float size = track.IsPerson ? 22f : 15f;
+                float size = track.IsPerson ? 18f : 13f;
                 dot.rectTransform.sizeDelta = new Vector2(size, size);
             }
 

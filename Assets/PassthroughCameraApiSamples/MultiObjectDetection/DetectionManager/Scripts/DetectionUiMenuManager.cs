@@ -1,4 +1,4 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates.
+﻿// Copyright (c) Meta Platforms, Inc. and affiliates.
 
 using System.Collections;
 using Meta.XR.Samples;
@@ -21,6 +21,12 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
         public UnityEvent<bool> OnPause;
 
+        // [BBB] Start detection automatically once permissions are granted (no "press A" step),
+        // and hide the sample's menu/info panel afterwards: our HUD replaces it.
+        [Header("[BBB] Awareness integration")]
+        [SerializeField] private bool m_autoStart = true;
+        [SerializeField] private bool m_hidePanelsAfterStart = true;
+
         private bool m_initialMenu;
 
         // start menu
@@ -42,6 +48,11 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             while (!OVRPermissionsRequester.IsPermissionGranted(OVRPermissionsRequester.Permission.Scene) || !OVRPermissionsRequester.IsPermissionGranted(OVRPermissionsRequester.Permission.PassthroughCameraAccess))
             {
                 yield return null;
+            }
+            if (m_autoStart) // [BBB]
+            {
+                OnPauseMenu(false);
+                yield break;
             }
             OnInitialMenu();
         }
@@ -95,6 +106,15 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             m_noPermissionPanel.SetActive(false);
 
             OnPause?.Invoke(visible);
+
+            // [BBB] Hide the sample's floating info/menu panel once detection runs.
+            // Only the info text's own panel is hidden (not the whole canvas, which may hold other sample objects).
+            if (!visible && m_hidePanelsAfterStart && m_labelInformation != null)
+            {
+                var infoPanel = m_labelInformation.transform.parent;
+                bool parentIsCanvas = infoPanel == null || infoPanel.GetComponent<Canvas>() != null;
+                (parentIsCanvas ? m_labelInformation.gameObject : infoPanel.gameObject).SetActive(false);
+            }
         }
         #endregion
 
